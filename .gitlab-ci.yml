@@ -1,0 +1,20 @@
+image: python:3.11-slim
+
+stages:
+  - report
+
+generate_insider_buy_report:
+  stage: report
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+      when: manual
+      allow_failure: true
+  script:
+    - python scripts/insider_buy_monitor.py --reports-dir reports
+  artifacts:
+    when: always
+    paths:
+      - reports/
+    expire_in: 90 days
