@@ -1,0 +1,40 @@
+name: Daily US insider buy monitor
+
+on:
+  schedule:
+    # 02:00 UTC = 10:00 Asia/Shanghai.
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generate report
+        run: python scripts/insider_buy_monitor.py --reports-dir reports
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT || vars.SEC_USER_AGENT || 'us-insider-buy-monitor github-actions contact@example.com' }}
+
+      - name: Commit report
+        run: |
+          if [ -n "$(git status --porcelain reports)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add reports
+            git commit -m "Add daily insider buy report"
+            git push
+          else
+            echo "No report changes to commit."
+          fi
