@@ -173,7 +173,7 @@ def request_text(url: str, *, retries: int = 3, sleep_seconds: float = 0.5) -> s
                 charset = response.headers.get_content_charset() or "utf-8"
                 return raw.decode(charset, errors="replace")
         except urllib.error.HTTPError as exc:
-            if exc.code == 404:
+            if exc.code in {403, 404}:
                 raise
             last_error = exc
         except urllib.error.URLError as exc:
