@@ -14,8 +14,8 @@ $safeDirectory = (Resolve-Path -Path $PSScriptRoot).Path.Replace("\", "/")
 Invoke-Git config --global --add safe.directory $safeDirectory
 Invoke-Git remote set-url origin https://github.com/yaopeng1314/AI-.git
 Invoke-Git branch -M main
-Invoke-Git config http.proxy http://127.0.0.1:15236
-Invoke-Git config https.proxy http://127.0.0.1:15236
+Invoke-Git config http.proxy socks5h://127.0.0.1:15235
+Invoke-Git config https.proxy socks5h://127.0.0.1:15235
 Invoke-Git config http.sslBackend openssl
 
 Write-Host "Pushing insider-buy monitor to https://github.com/yaopeng1314/AI- ..."
