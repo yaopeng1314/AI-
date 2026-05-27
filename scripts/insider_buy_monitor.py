@@ -15,6 +15,7 @@ import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -25,6 +26,7 @@ from zoneinfo import ZoneInfo
 
 
 SEC_ARCHIVES = "https://www.sec.gov/Archives"
+SEC_CURRENT_FEED = "https://www.sec.gov/cgi-bin/browse-edgar"
 SEC_USER_AGENT = os.environ.get(
     "SEC_USER_AGENT",
     "us-insider-buy-monitor github-actions contact@example.com",
@@ -193,6 +195,14 @@ def master_index_url(date_value: dt.date) -> str:
     return f"{SEC_ARCHIVES}/edgar/daily-index/{date_value.year}/QTR{qtr}/master.{stamp}.idx"
 
 
+def current_feed_url(form_type: str, *, start: int = 0, count: int = 100) -> str:
+    form_encoded = urllib.parse.quote(form_type)
+    return (
+        f"{SEC_CURRENT_FEED}?action=getcurrent&type={form_encoded}"
+        f"&owner=include&start={start}&count={count}&output=atom"
+    )
+
+
 def parse_master_index(text: str) -> list[Filing]:
     filings: list[Filing] = []
     data_started = False
@@ -212,7 +222,119 @@ def parse_master_index(text: str) -> list[Filing]:
     return filings
 
 
+def atom_text(node: ET.Element, local_name: str) -> str:
+    for child in list(node):
+        if child.tag.endswith("}" + local_name) or child.tag == local_name:
+            return "".join(child.itertext()).strip()
+    return ""
+
+
+def atom_link(node: ET.Element) -> str:
+    for child in list(node):
+        if child.tag.endswith("}link") or child.tag == "link":
+            href = child.attrib.get("href", "")
+            if href:
+                return href
+    return ""
+
+
+def atom_category(node: ET.Element) -> str:
+    for child in list(node):
+        if child.tag.endswith("}category") or child.tag == "category":
+            term = child.attrib.get("term", "")
+            if term:
+                return term
+    return ""
+
+
+def sec_link_to_filename(link: str) -> tuple[str, str]:
+    """Return SEC Archives-relative filename and CIK parsed from an Atom link."""
+    match = re.search(r"/Archives/(edgar/data/(\d+)/\d+/[^?#]+)", link)
+    if not match:
+        return "", ""
+    filename = match.group(1)
+    cik = match.group(2)
+    if filename.endswith("-index.htm"):
+        filename = filename[: -len("-index.htm")] + ".txt"
+    return filename, cik
+
+
+def parse_current_atom(text: str, requested_form_type: str) -> list[Filing]:
+    try:
+        root = ET.fromstring(text.encode("utf-8"))
+    except ET.ParseError:
+        return []
+
+    filings: list[Filing] = []
+    for entry in root.iter():
+        if not (entry.tag.endswith("}entry") or entry.tag == "entry"):
+            continue
+        title = html.unescape(atom_text(entry, "title"))
+        link = atom_link(entry)
+        form_type = atom_category(entry) or requested_form_type
+        filename, cik = sec_link_to_filename(link)
+        if not filename:
+            continue
+
+        summary = html.unescape(atom_text(entry, "summary"))
+        updated = atom_text(entry, "updated")
+        filed_match = re.search(r"Filed:\s*(\d{4}-\d{2}-\d{2})", summary, flags=re.I)
+        filed_date = filed_match.group(1) if filed_match else updated[:10]
+        if not re.match(r"\d{4}-\d{2}-\d{2}", filed_date):
+            filed_date = dt.datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+
+        company = title
+        if " - " in title:
+            company = title.split(" - ", 1)[1].strip()
+        company = re.sub(r"\s+\(\d{10}\).*$", "", company).strip() or title
+        filings.append(Filing(cik, company, form_type, filed_date, filename))
+    return filings
+
+
+def fetch_current_feed_filings(form_types: Iterable[str], pages: int = 3) -> list[Filing]:
+    filings: list[Filing] = []
+    for form_type in form_types:
+        for page in range(pages):
+            url = current_feed_url(form_type, start=page * 100, count=100)
+            try:
+                text = request_text(url)
+            except urllib.error.HTTPError as exc:
+                print(f"warn: SEC current feed unavailable for {form_type} ({exc.code}).", file=sys.stderr)
+                break
+            page_filings = parse_current_atom(text, form_type)
+            filings.extend(page_filings)
+            if len(page_filings) < 100:
+                break
+            time.sleep(0.2)
+    unique: dict[str, Filing] = {}
+    for filing in filings:
+        unique[f"{filing.form_type}:{filing.filename}"] = filing
+    return list(unique.values())
+
+
+def latest_current_feed_filings() -> tuple[dt.date, list[Filing], str] | None:
+    filings = fetch_current_feed_filings(["4", "4/A", "SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A"], pages=3)
+    if not filings:
+        return None
+    dates = []
+    for filing in filings:
+        try:
+            dates.append(dt.date.fromisoformat(filing.filed_date))
+        except ValueError:
+            continue
+    if not dates:
+        return None
+    latest_date = max(dates)
+    latest_filings = [filing for filing in filings if filing.filed_date == latest_date.isoformat()]
+    reason = "使用 SEC 当前披露 feed 找到最近官方披露日"
+    return latest_date, latest_filings, reason
+
+
 def find_latest_target_filings(lookback_days: int) -> tuple[dt.date, list[Filing], str]:
+    current_feed_result = latest_current_feed_filings()
+    if current_feed_result is not None:
+        return current_feed_result
+
     ny_today = dt.datetime.now(ZoneInfo("America/New_York")).date()
     for offset in range(lookback_days):
         candidate = ny_today - dt.timedelta(days=offset)
