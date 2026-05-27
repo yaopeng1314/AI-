@@ -220,7 +220,8 @@ def find_latest_target_filings(lookback_days: int) -> tuple[dt.date, list[Filing
         try:
             text = request_text(url)
         except urllib.error.HTTPError as exc:
-            if exc.code == 404:
+            if exc.code in {403, 404}:
+                print(f"warn: SEC daily index unavailable for {candidate.isoformat()} ({exc.code}); trying previous day.", file=sys.stderr)
                 continue
             raise
         filings = parse_master_index(text)

@@ -25,7 +25,7 @@ jobs:
       - name: Generate report
         run: python scripts/insider_buy_monitor.py --reports-dir reports
         env:
-          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT || vars.SEC_USER_AGENT || 'us-insider-buy-monitor github-actions contact@example.com' }}
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT || vars.SEC_USER_AGENT || 'yaopeng1314 AI insider monitor yaopeng1314@users.noreply.github.com' }}
 
       - name: Commit report
         run: |
